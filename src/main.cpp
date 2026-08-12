@@ -16,6 +16,7 @@
 #include "../include/hash_table.h"
 #include "../include/expiry_heap.h"
 #include "../include/zset.h"
+#include "../include/list.h"
 
 
 // --------------------------------------
@@ -232,6 +233,7 @@ int main() {
     HashTable store;
     ExpiryHeap expiry_heap;
     std::unordered_map<std::string, ZSet> zsets;
+    std::unordered_map<std::string, RedisList> lists;
 
 
     // ----------------------------------
@@ -842,6 +844,465 @@ int main() {
                             );
                         }
                     }
+
+                    // ==================================
+                    // LLEN
+                    // ==================================
+
+                    else if (parts[0] == "LLEN") {
+
+                        // LLEN key
+
+                        if (parts.size() != 2) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+
+                        auto it =
+                            lists.find(key);
+
+
+                        int count = 0;
+
+
+                        if (it != lists.end()) {
+
+                            count =
+                                it->second.size();
+                        }
+
+
+                        std::string response =
+                            std::to_string(count);
+
+                        response += "\n";
+
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // LRANGE
+                    // ==================================
+
+                    else if (parts[0] == "LRANGE") {
+
+                        // LRANGE key start stop
+
+                        if (parts.size() != 4) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+                        int start;
+                        int stop;
+
+
+                        try {
+
+                            start =
+                                std::stoi(parts[2]);
+
+                            stop =
+                                std::stoi(parts[3]);
+
+                        }
+                        catch (...) {
+
+                            const char* response =
+                                "-ERR invalid range\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        auto it =
+                            lists.find(key);
+
+
+                        // List doesn't exist
+                        if (it == lists.end()) {
+
+                            const char* response =
+                                "(empty)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        auto elements =
+                            it->second.get_range(
+                                start,
+                                stop
+                            );
+
+
+                        if (elements.empty()) {
+
+                            const char* response =
+                                "(empty)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string response;
+
+
+                        for (
+                            const auto& value :
+                            elements
+                        ) {
+
+                            response += value;
+                            response += "\n";
+                        }
+
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // RPOP
+                    // ==================================
+
+                    else if (parts[0] == "RPOP") {
+
+                        // RPOP key
+
+                        if (parts.size() != 2) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+
+                        auto it =
+                            lists.find(key);
+
+
+                        // List doesn't exist
+                        if (it == lists.end()) {
+
+                            const char* response =
+                                "(nil)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string value;
+
+
+                        // Remove from back
+                        if (
+                            !it->second.pop_back(
+                                value
+                            )
+                        ) {
+
+                            const char* response =
+                                "(nil)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        value += "\n";
+
+
+                        send(
+                            client_fd,
+                            value.c_str(),
+                            value.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // LPOP
+                    // ==================================
+
+                    else if (parts[0] == "LPOP") {
+
+                        // LPOP key
+
+                        if (parts.size() != 2) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+
+                        auto it =
+                            lists.find(key);
+
+
+                        // List doesn't exist
+                        if (it == lists.end()) {
+
+                            const char* response =
+                                "(nil)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string value;
+
+
+                        // Remove from front
+                        if (
+                            !it->second.pop_front(
+                                value
+                            )
+                        ) {
+
+                            const char* response =
+                                "(nil)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        value += "\n";
+
+
+                        send(
+                            client_fd,
+                            value.c_str(),
+                            value.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // RPUSH
+                    // ==================================
+
+                    else if (parts[0] == "RPUSH") {
+
+                        // RPUSH key value
+
+                        if (parts.size() != 3) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+                        std::string value =
+                            parts[2];
+
+
+                        // Add to back
+                        lists[key].push_back(
+                            value
+                        );
+
+
+                        // Return new list length
+                        std::string response =
+                            std::to_string(
+                                lists[key].size()
+                            );
+
+                        response += "\n";
+
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // LPUSH
+                    // ==================================
+
+                    else if (parts[0] == "LPUSH") {
+
+                        // LPUSH key value
+
+                        if (parts.size() != 3) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+                        std::string value =
+                            parts[2];
+
+
+                        // Add to front
+                        lists[key].push_front(
+                            value
+                        );
+
+
+                        // Return new list length
+                        std::string response =
+                            std::to_string(
+                                lists[key].size()
+                            );
+
+                        response += "\n";
+
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
 
                     // ==================================
                     // ZADD
