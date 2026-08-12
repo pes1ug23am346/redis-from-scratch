@@ -928,6 +928,382 @@ int main() {
 
 
                     // ==================================
+                    // ZPOPMIN
+                    // ==================================
+
+                    else if (parts[0] == "ZPOPMIN") {
+
+                        // ZPOPMIN key
+
+                        if (parts.size() != 2) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        std::string key =
+                            parts[1];
+
+                        auto it =
+                            zsets.find(key);
+
+                        if (it == zsets.end()) {
+
+                            const char* response =
+                                "(empty)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        double score;
+                        std::string member;
+
+                        if (
+                            !it->second.pop_min(
+                                score,
+                                member
+                            )
+                        ) {
+
+                            const char* response =
+                                "(empty)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        std::string response =
+                            member;
+
+                        response += "\n";
+                        response += format_score(score);
+                        response += "\n";
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // ZPOPMAX
+                    // ==================================
+
+                    else if (parts[0] == "ZPOPMAX") {
+
+                        // ZPOPMAX key
+
+                        if (parts.size() != 2) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        std::string key =
+                            parts[1];
+
+                        auto it =
+                            zsets.find(key);
+
+                        if (it == zsets.end()) {
+
+                            const char* response =
+                                "(empty)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        double score;
+                        std::string member;
+
+                        if (
+                            !it->second.pop_max(
+                                score,
+                                member
+                            )
+                        ) {
+
+                            const char* response =
+                                "(empty)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        std::string response =
+                            member;
+
+                        response += "\n";
+                        response += format_score(score);
+                        response += "\n";
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // ZINCRBY
+                    // ==================================
+
+                    else if (parts[0] == "ZINCRBY") {
+
+                        // ZINCRBY key increment member
+
+                        if (parts.size() != 4) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+                        double amount;
+
+
+                        try {
+
+                            amount =
+                                std::stod(parts[2]);
+
+                        }
+                        catch (...) {
+
+                            const char* response =
+                                "-ERR invalid increment\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string member =
+                            parts[3];
+
+
+                        double new_score =
+                            zsets[key].increment(
+                                amount,
+                                member
+                            );
+
+
+                        std::string response =
+                            format_score(new_score);
+
+                        response += "\n";
+
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // ZSCORE
+                    // ==================================
+
+                    else if (parts[0] == "ZSCORE") {
+
+                        // ZSCORE key member
+
+                        if (parts.size() != 3) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+                        std::string member =
+                            parts[2];
+
+                        double score;
+
+
+                        // Check whether the ZSET exists
+                        auto it =
+                            zsets.find(key);
+
+
+                        if (
+                            it == zsets.end() ||
+                            !it->second.get_score(
+                                member,
+                                score
+                            )
+                        ) {
+
+                            const char* response =
+                                "(nil)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string response =
+                            format_score(score);
+
+                        response += "\n";
+
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // ZCARD
+                    // ==================================
+
+                    else if (parts[0] == "ZCARD") {
+
+                        // ZCARD key
+
+                        if (parts.size() != 2) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+
+                        auto it =
+                            zsets.find(key);
+
+
+                        int count = 0;
+
+
+                        if (it != zsets.end()) {
+
+                            count =
+                                it->second.size();
+                        }
+
+
+                        std::string response =
+                            std::to_string(count);
+
+                        response += "\n";
+
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
                     // ZREM
                     // ==================================
 

@@ -100,6 +100,32 @@ public:
 
 
     // ----------------------------------
+    // ZSCORE
+    // ----------------------------------
+
+    bool get_score(
+        const std::string& member,
+        double& score
+    ) const {
+
+        std::string score_string;
+
+        if (!scores.get(
+                member,
+                score_string
+            )) {
+
+            return false;
+        }
+
+        score =
+            std::stod(score_string);
+
+        return true;
+    }
+
+
+    // ----------------------------------
     // ZREM
     // ----------------------------------
 
@@ -136,6 +162,127 @@ public:
         // Remove from HashTable
         return scores.remove(
             member
+        );
+    }
+
+
+    // ----------------------------------
+    // ZPOPMIN
+    // ----------------------------------
+
+    bool pop_min(
+        double& score,
+        std::string& member
+    ) {
+
+        auto elements =
+            tree.get_all();
+
+        if (elements.empty()) {
+            return false;
+        }
+
+        score =
+            elements.front().first;
+
+        member =
+            elements.front().second;
+
+        return remove(member);
+    }
+
+
+    // ----------------------------------
+    // ZPOPMAX
+    // ----------------------------------
+
+    bool pop_max(
+        double& score,
+        std::string& member
+    ) {
+
+        auto elements =
+            tree.get_all();
+
+        if (elements.empty()) {
+            return false;
+        }
+
+        score =
+            elements.back().first;
+
+        member =
+            elements.back().second;
+
+        return remove(member);
+    }
+
+
+    // ----------------------------------
+    // ZINCRBY
+    // ----------------------------------
+
+    double increment(
+        double amount,
+        const std::string& member
+    ) {
+
+        std::string old_score_string;
+
+        double old_score = 0;
+
+
+        // Check whether member exists
+        if (
+            scores.get(
+                member,
+                old_score_string
+            )
+        ) {
+
+            old_score =
+                std::stod(old_score_string);
+
+
+            // Remove old score from AVL
+            tree.remove(
+                old_score,
+                member
+            );
+        }
+
+
+        // Calculate new score
+        double new_score =
+            old_score + amount;
+
+
+        // Update HashTable
+        scores.set(
+            member,
+            std::to_string(new_score)
+        );
+
+
+        // Insert new score into AVL
+        tree.insert(
+            new_score,
+            member
+        );
+
+
+        return new_score;
+    }
+
+
+    // ----------------------------------
+    // ZCARD
+    // ----------------------------------
+
+    int size() const {
+
+        return static_cast<int>(
+            tree.get_all().size()
         );
     }
 
