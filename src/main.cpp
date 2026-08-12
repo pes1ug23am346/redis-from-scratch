@@ -1,4 +1,5 @@
 #include <iostream>
+#include <unordered_map>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@
 
 #include "../include/hash_table.h"
 #include "../include/expiry_heap.h"
+#include "../include/zset.h"
 
 
 // --------------------------------------
@@ -49,6 +51,38 @@ bool set_nonblocking(int fd) {
 // --------------------------------------
 // Parse command
 // --------------------------------------
+
+std::string format_score(double score) {
+
+    if (score == static_cast<long long>(score)) {
+
+        return std::to_string(
+            static_cast<long long>(score)
+        );
+    }
+
+    std::string result =
+        std::to_string(score);
+
+    // Remove trailing zeros
+    while (
+        !result.empty() &&
+        result.back() == '0'
+    ) {
+        result.pop_back();
+    }
+
+    // Remove trailing decimal point
+    if (
+        !result.empty() &&
+        result.back() == '.'
+    ) {
+        result.pop_back();
+    }
+
+    return result;
+}
+
 
 std::vector<std::string> parse_command(
     const std::string& request
@@ -197,6 +231,7 @@ int main() {
 
     HashTable store;
     ExpiryHeap expiry_heap;
+    std::unordered_map<std::string, ZSet> zsets;
 
 
     // ----------------------------------
@@ -807,6 +842,333 @@ int main() {
                             );
                         }
                     }
+
+                    // ==================================
+                    // ZADD
+                    // ==================================
+
+                    else if (parts[0] == "ZADD") {
+
+                        // ZADD key score member
+
+                        if (parts.size() != 4) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+                        double score;
+
+
+                        try {
+
+                            score =
+                                std::stod(parts[2]);
+
+                        }
+                        catch (...) {
+
+                            const char* response =
+                                "-ERR invalid score\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string member =
+                            parts[3];
+
+
+                        bool added =
+                            zsets[key].add(
+                                score,
+                                member
+                            );
+
+
+                        const char* response;
+
+                        if (added) {
+
+                            response = ":1\n";
+
+                        } else {
+
+                            response = ":0\n";
+                        }
+
+
+                        send(
+                            client_fd,
+                            response,
+                            strlen(response),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // ZREM
+                    // ==================================
+
+                    else if (parts[0] == "ZREM") {
+
+                        // ZREM key member
+
+                        if (parts.size() != 3) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string key =
+                            parts[1];
+
+                        std::string member =
+                            parts[2];
+
+
+                        bool removed =
+                            zsets[key].remove(
+                                member
+                            );
+
+
+                        const char* response;
+
+                        if (removed) {
+
+                            response = ":1\n";
+
+                        } else {
+
+                            response = ":0\n";
+                        }
+
+
+                        send(
+                            client_fd,
+                            response,
+                            strlen(response),
+                            0
+                        );
+                    }
+
+
+                    // ==================================
+                    // ZREM
+                    // ==================================
+
+                    // ==================================
+                    // ZRANGE
+                    // ==================================
+
+                    else if (parts[0] == "ZRANGE") {
+
+                        std::string key =
+                            parts[1];
+
+
+                        // ZRANGE key start stop
+                        // ZRANGE key start stop WITHSCORES
+
+                        if (
+                            parts.size() != 4 &&
+                            parts.size() != 5
+                        ) {
+
+                            const char* response =
+                                "-ERR wrong number of arguments\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        // Check WITHSCORES
+                        if (
+                            parts.size() == 5 &&
+                            parts[4] != "WITHSCORES"
+                        ) {
+
+                            const char* response =
+                                "-ERR syntax error\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        int start_index;
+                        int stop_index;
+
+
+                        try {
+
+                            start_index =
+                                std::stoi(parts[2]);
+
+                            stop_index =
+                                std::stoi(parts[3]);
+
+                        }
+                        catch (...) {
+
+                            const char* response =
+                                "-ERR invalid range\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        // Get sorted elements
+                        auto elements =
+                            zsets[key].range();
+
+
+                        int size =
+                            static_cast<int>(
+                                elements.size()
+                            );
+
+
+                        // Convert negative indexes
+                        if (start_index < 0) {
+
+                            start_index =
+                                size + start_index;
+                        }
+
+
+                        if (stop_index < 0) {
+
+                            stop_index =
+                                size + stop_index;
+                        }
+
+
+                        // Clamp start
+                        if (start_index < 0) {
+
+                            start_index = 0;
+                        }
+
+
+                        // Clamp stop
+                        if (stop_index >= size) {
+
+                            stop_index =
+                                size - 1;
+                        }
+
+
+                        // Empty range
+                        if (
+                            size == 0 ||
+                            start_index > stop_index ||
+                            start_index >= size
+                        ) {
+
+                            const char* response =
+                                "(empty)\n";
+
+                            send(
+                                client_fd,
+                                response,
+                                strlen(response),
+                                0
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string response;
+
+
+                        for (
+                            int i = start_index;
+                            i <= stop_index;
+                            i++
+                        ) {
+
+                            // Member
+                            response +=
+                                elements[i].second;
+
+                            response += "\n";
+
+
+                            // Score
+                            if (parts.size() == 5) {
+
+                                response +=
+                                    format_score(
+                                        elements[i].first
+                                    );
+
+                                response += "\n";
+                            }
+                        }
+
+
+                        send(
+                            client_fd,
+                            response.c_str(),
+                            response.size(),
+                            0
+                        );
+                    }
+
 
                     else if (parts[0] == "PEXPIRE") {
 
