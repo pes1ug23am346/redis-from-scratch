@@ -17,7 +17,7 @@
 #include "../include/expiry_heap.h"
 #include "../include/zset.h"
 #include "../include/list.h"
-
+#include "../include/resp.h"
 
 // --------------------------------------
 // Connection state for each client
@@ -530,57 +530,59 @@ int main() {
 
                 while (true) {
 
-                    size_t newline_pos =
-                        connection->input_buffer.find(
-                            '\n'
+                    RESPResult parsed =
+                        parseRESP(
+                            connection->input_buffer
                         );
 
 
-                    // No complete request
-                    if (
-                        newline_pos ==
-                        std::string::npos
-                    ) {
+                    // ----------------------------------
+                    // Invalid RESP request
+                    // ----------------------------------
+
+                    if (parsed.error) {
+
+                        const char* response =
+                            "-ERR protocol error\r\n";
+
+                        sendRESP(
+                            client_fd,
+                            response
+                        );
+
+                        connection->input_buffer.clear();
 
                         break;
                     }
 
 
                     // ----------------------------------
-                    // Extract request
+                    // Incomplete request
                     // ----------------------------------
 
-                    std::string request =
-                        connection->input_buffer.substr(
-                            0,
-                            newline_pos
-                        );
+                    if (!parsed.complete) {
+                        break;
+                    }
 
 
-                    // Remove request + newline
+                    // ----------------------------------
+                    // Remove consumed RESP bytes
+                    // ----------------------------------
+
                     connection->input_buffer.erase(
                         0,
-                        newline_pos + 1
+                        parsed.consumed
                     );
 
 
-                    std::cout
-                        << "Complete request: "
-                        << request
-                        << "\n";
-
-
                     // ----------------------------------
-                    // Parse command
+                    // Parsed command
                     // ----------------------------------
 
                     std::vector<std::string> parts =
-                        parse_command(
-                            request
-                        );
+                        parsed.parts;
 
 
-                    // Empty command
                     if (parts.empty()) {
                         continue;
                     }
@@ -604,14 +606,12 @@ int main() {
                         if (parts.size() != 3 &&
                             parts.size() != 5) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -637,14 +637,12 @@ int main() {
 
                             if (parts[3] != "PX") {
 
-                                const char* response =
-                                    "-ERR syntax error\n";
+                                std::string response =
+                                    respError("ERR syntax error");
 
-                                send(
+                                sendRESP(
                                     client_fd,
-                                    response,
-                                    strlen(response),
-                                    0
+                                    response
                                 );
 
                                 continue;
@@ -660,14 +658,12 @@ int main() {
 
                             } catch (...) {
 
-                                const char* response =
-                                    "-ERR invalid milliseconds\n";
+                                std::string response =
+                                    respError("ERR invalid milliseconds");
 
-                                send(
+                                sendRESP(
                                     client_fd,
-                                    response,
-                                    strlen(response),
-                                    0
+                                    response
                                 );
 
                                 continue;
@@ -676,14 +672,12 @@ int main() {
 
                             if (milliseconds <= 0) {
 
-                                const char* response =
-                                    "-ERR invalid milliseconds\n";
+                                std::string response =
+                                    respError("ERR invalid milliseconds");
 
-                                send(
+                                sendRESP(
                                     client_fd,
-                                    response,
-                                    strlen(response),
-                                    0
+                                    response
                                 );
 
                                 continue;
@@ -705,15 +699,13 @@ int main() {
                             << "\n";
 
 
-                        const char* response =
-                            "+OK\n";
+                        std::string response =
+                            respSimpleString("OK");
 
 
-                        send(
+                        sendRESP(
                             client_fd,
-                            response,
-                            strlen(response),
-                            0
+                            response
                         );
                     }
 
@@ -728,14 +720,12 @@ int main() {
 
                         if (parts.size() != 2) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -757,33 +747,28 @@ int main() {
                         ) {
 
                             std::string response =
-                                value + "\n";
+                                respBulkString(value);
 
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response.c_str(),
-                                response.size(),
-                                0
+                                response
                             );
 
                         } else {
 
-                            const char* response =
-                                "(nil)\n";
+                            std::string response =
+                                respNull();
 
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
                         }
                     }
 
 
-                    // ==================================
                     // DEL
                     // ==================================
 
@@ -793,14 +778,12 @@ int main() {
 
                         if (parts.size() != 2) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -819,28 +802,24 @@ int main() {
 
                         if (deleted) {
 
-                            const char* response =
-                                ":1\n";
+                            std::string response =
+                                respInteger(1);
 
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                         } else {
 
-                            const char* response =
-                                ":0\n";
+                            std::string response =
+                                respInteger(0);
 
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
                         }
                     }
@@ -855,14 +834,12 @@ int main() {
 
                         if (parts.size() != 2) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -888,16 +865,11 @@ int main() {
 
 
                         std::string response =
-                            std::to_string(count);
+                            respInteger(count);
 
-                        response += "\n";
-
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
@@ -912,14 +884,12 @@ int main() {
 
                         if (parts.size() != 4) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -944,14 +914,12 @@ int main() {
                         }
                         catch (...) {
 
-                            const char* response =
-                                "-ERR invalid range\n";
+                            std::string response =
+                                respError("ERR invalid range");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -965,14 +933,12 @@ int main() {
                         // List doesn't exist
                         if (it == lists.end()) {
 
-                            const char* response =
-                                "(empty)\n";
+                            std::string response =
+                                respArray({});
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -986,45 +952,16 @@ int main() {
                             );
 
 
-                        if (elements.empty()) {
+                        std::string response =
+                            respArray(elements);
 
-                            const char* response =
-                                "(empty)\n";
-
-                            send(
-                                client_fd,
-                                response,
-                                strlen(response),
-                                0
-                            );
-
-                            continue;
-                        }
-
-
-                        std::string response;
-
-
-                        for (
-                            const auto& value :
-                            elements
-                        ) {
-
-                            response += value;
-                            response += "\n";
-                        }
-
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
 
-                    // ==================================
                     // RPOP
                     // ==================================
 
@@ -1034,14 +971,12 @@ int main() {
 
                         if (parts.size() != 2) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1059,14 +994,12 @@ int main() {
                         // List doesn't exist
                         if (it == lists.end()) {
 
-                            const char* response =
-                                "(nil)\n";
+                            std::string response =
+                                respNull();
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1083,28 +1016,24 @@ int main() {
                             )
                         ) {
 
-                            const char* response =
-                                "(nil)\n";
+                            std::string response =
+                                respNull();
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
                         }
 
 
-                        value += "\n";
+                        std::string response =
+                            respBulkString(value);
 
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            value.c_str(),
-                            value.size(),
-                            0
+                            response
                         );
                     }
 
@@ -1119,14 +1048,12 @@ int main() {
 
                         if (parts.size() != 2) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1144,14 +1071,12 @@ int main() {
                         // List doesn't exist
                         if (it == lists.end()) {
 
-                            const char* response =
-                                "(nil)\n";
+                            std::string response =
+                                respNull();
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1168,33 +1093,28 @@ int main() {
                             )
                         ) {
 
-                            const char* response =
-                                "(nil)\n";
+                            std::string response =
+                                respNull();
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
                         }
 
 
-                        value += "\n";
+                        std::string response =
+                            respBulkString(value);
 
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            value.c_str(),
-                            value.size(),
-                            0
+                            response
                         );
                     }
 
 
-                    // ==================================
                     // RPUSH
                     // ==================================
 
@@ -1204,14 +1124,12 @@ int main() {
 
                         if (parts.size() != 3) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1233,18 +1151,13 @@ int main() {
 
                         // Return new list length
                         std::string response =
-                            std::to_string(
+                            respInteger(
                                 lists[key].size()
                             );
 
-                        response += "\n";
-
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
@@ -1259,14 +1172,12 @@ int main() {
 
                         if (parts.size() != 3) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1288,18 +1199,13 @@ int main() {
 
                         // Return new list length
                         std::string response =
-                            std::to_string(
+                            respInteger(
                                 lists[key].size()
                             );
 
-                        response += "\n";
-
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
@@ -1314,14 +1220,12 @@ int main() {
 
                         if (parts.size() != 4) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1345,11 +1249,9 @@ int main() {
                             const char* response =
                                 "-ERR invalid score\n";
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1367,23 +1269,23 @@ int main() {
                             );
 
 
-                        const char* response;
+                        std::string response;
 
                         if (added) {
 
-                            response = ":1\n";
+                            response =
+                                respInteger(1);
 
                         } else {
 
-                            response = ":0\n";
+                            response =
+                                respInteger(0);
                         }
 
 
-                        send(
+                        sendRESP(
                             client_fd,
-                            response,
-                            strlen(response),
-                            0
+                            response
                         );
                     }
 
@@ -1398,14 +1300,12 @@ int main() {
 
                         if (parts.size() != 2) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1419,14 +1319,12 @@ int main() {
 
                         if (it == zsets.end()) {
 
-                            const char* response =
-                                "(empty)\n";
+                            std::string response =
+                                respArray({});
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1442,31 +1340,33 @@ int main() {
                             )
                         ) {
 
-                            const char* response =
-                                "(empty)\n";
+                            std::string response =
+                                respArray({});
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
                         }
 
+                        std::vector<std::string> values;
+
+                        values.push_back(
+                            member
+                        );
+
+                        values.push_back(
+                            format_score(score)
+                        );
+
                         std::string response =
-                            member;
+                            respArray(values);
 
-                        response += "\n";
-                        response += format_score(score);
-                        response += "\n";
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
@@ -1481,14 +1381,12 @@ int main() {
 
                         if (parts.size() != 2) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1502,14 +1400,12 @@ int main() {
 
                         if (it == zsets.end()) {
 
-                            const char* response =
-                                "(empty)\n";
+                            std::string response =
+                                respArray({});
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1525,31 +1421,33 @@ int main() {
                             )
                         ) {
 
-                            const char* response =
-                                "(empty)\n";
+                            std::string response =
+                                respArray({});
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
                         }
 
+                        std::vector<std::string> values;
+
+                        values.push_back(
+                            member
+                        );
+
+                        values.push_back(
+                            format_score(score)
+                        );
+
                         std::string response =
-                            member;
+                            respArray(values);
 
-                        response += "\n";
-                        response += format_score(score);
-                        response += "\n";
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
@@ -1564,14 +1462,12 @@ int main() {
 
                         if (parts.size() != 4) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1595,11 +1491,9 @@ int main() {
                             const char* response =
                                 "-ERR invalid increment\n";
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1618,16 +1512,13 @@ int main() {
 
 
                         std::string response =
-                            format_score(new_score);
+                            respBulkString(
+                                format_score(new_score)
+                            );
 
-                        response += "\n";
-
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
@@ -1642,14 +1533,12 @@ int main() {
 
                         if (parts.size() != 3) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1678,14 +1567,12 @@ int main() {
                             )
                         ) {
 
-                            const char* response =
-                                "(nil)\n";
+                            std::string response =
+                                respNull();
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1693,16 +1580,13 @@ int main() {
 
 
                         std::string response =
-                            format_score(score);
+                            respBulkString(
+                                format_score(score)
+                            );
 
-                        response += "\n";
-
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
@@ -1717,14 +1601,12 @@ int main() {
 
                         if (parts.size() != 2) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1750,16 +1632,11 @@ int main() {
 
 
                         std::string response =
-                            std::to_string(count);
+                            respInteger(count);
 
-                        response += "\n";
-
-
-                        send(
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
@@ -1774,14 +1651,12 @@ int main() {
 
                         if (parts.size() != 3) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1801,23 +1676,23 @@ int main() {
                             );
 
 
-                        const char* response;
+                        std::string response;
 
                         if (removed) {
 
-                            response = ":1\n";
+                            response =
+                                respInteger(1);
 
                         } else {
 
-                            response = ":0\n";
+                            response =
+                                respInteger(0);
                         }
 
 
-                        send(
+                        sendRESP(
                             client_fd,
-                            response,
-                            strlen(response),
-                            0
+                            response
                         );
                     }
 
@@ -1827,14 +1702,11 @@ int main() {
                     // ==================================
 
                     // ==================================
+                    // ==================================
                     // ZRANGE
                     // ==================================
 
                     else if (parts[0] == "ZRANGE") {
-
-                        std::string key =
-                            parts[1];
-
 
                         // ZRANGE key start stop
                         // ZRANGE key start stop WITHSCORES
@@ -1844,18 +1716,20 @@ int main() {
                             parts.size() != 5
                         ) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
                         }
+
+
+                        std::string key =
+                            parts[1];
 
 
                         // Check WITHSCORES
@@ -1864,14 +1738,12 @@ int main() {
                             parts[4] != "WITHSCORES"
                         ) {
 
-                            const char* response =
-                                "-ERR syntax error\n";
+                            std::string response =
+                                respError("ERR syntax error");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1893,14 +1765,12 @@ int main() {
                         }
                         catch (...) {
 
-                            const char* response =
-                                "-ERR invalid range\n";
+                            std::string response =
+                                respError("ERR invalid range");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -1955,21 +1825,19 @@ int main() {
                             start_index >= size
                         ) {
 
-                            const char* response =
-                                "(empty)\n";
+                            std::string response =
+                                respArray({});
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
                         }
 
 
-                        std::string response;
+                        std::vector<std::string> values;
 
 
                         for (
@@ -1979,30 +1847,29 @@ int main() {
                         ) {
 
                             // Member
-                            response +=
-                                elements[i].second;
-
-                            response += "\n";
+                            values.push_back(
+                                elements[i].second
+                            );
 
 
                             // Score
                             if (parts.size() == 5) {
 
-                                response +=
+                                values.push_back(
                                     format_score(
                                         elements[i].first
-                                    );
-
-                                response += "\n";
+                                    )
+                                );
                             }
                         }
 
 
-                        send(
+                        std::string response =
+                            respArray(values);
+
+                        sendRESP(
                             client_fd,
-                            response.c_str(),
-                            response.size(),
-                            0
+                            response
                         );
                     }
 
@@ -2011,14 +1878,12 @@ int main() {
 
                         if (parts.size() != 3) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -2037,11 +1902,9 @@ int main() {
                             const char* response =
                                 "-ERR invalid milliseconds\n";
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -2053,14 +1916,12 @@ int main() {
 
                         if (!store.get(key, value)) {
 
-                            const char* response =
-                                ":0\n";
+                            std::string response =
+                                respInteger(0);
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -2074,14 +1935,12 @@ int main() {
                         );
 
 
-                        const char* response =
-                            ":1\n";
+                        std::string response =
+                            respInteger(1);
 
-                        send(
+                        sendRESP(
                             client_fd,
-                            response,
-                            strlen(response),
-                            0
+                            response
                         );
                     }
 
@@ -2090,14 +1949,12 @@ int main() {
 
                         if (parts.size() != 2) {
 
-                            const char* response =
-                                "-ERR wrong number of arguments\n";
+                            std::string response =
+                                respError("ERR wrong number of arguments");
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -2111,14 +1968,12 @@ int main() {
 
                         if (!store.get(key, value)) {
 
-                            const char* response =
-                                "-2\n";
+                            std::string response =
+                                respInteger(-2);
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                             continue;
@@ -2132,26 +1987,22 @@ int main() {
                         if (ttl == -2) {
 
                             // Key exists but has no expiration
-                            const char* response =
-                                "-1\n";
+                            std::string response =
+                                respInteger(-1);
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response,
-                                strlen(response),
-                                0
+                                response
                             );
 
                         } else {
 
                             std::string response =
-                                std::to_string(ttl) + "\n";
+                                respInteger(ttl);
 
-                            send(
+                            sendRESP(
                                 client_fd,
-                                response.c_str(),
-                                response.size(),
-                                0
+                                response
                             );
                         }
                     }
@@ -2167,11 +2018,9 @@ int main() {
                             "-ERR unknown command\n";
 
 
-                        send(
+                        sendRESP(
                             client_fd,
-                            response,
-                            strlen(response),
-                            0
+                            response
                         );
                     }
                 }

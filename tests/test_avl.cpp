@@ -1,29 +1,15 @@
+#include <cassert>
 #include <iostream>
 #include "../include/avl_tree.h"
-
-void print_tree(
-    const AVLTree& tree,
-    const std::string& label
-) {
-    std::cout << "\n" << label << "\n";
-
-    auto result = tree.get_all();
-
-    for (const auto& entry : result) {
-
-        std::cout
-            << entry.first
-            << " "
-            << entry.second
-            << "\n";
-    }
-}
 
 int main() {
 
     AVLTree tree;
 
-    // Build tree
+    // ==============================
+    // INSERT
+    // ==============================
+
     tree.insert(50, "Veerendra");
     tree.insert(30, "Amit");
     tree.insert(70, "Rahul");
@@ -32,47 +18,125 @@ int main() {
     tree.insert(60, "Suresh");
     tree.insert(80, "Arjun");
 
-    print_tree(
-        tree,
-        "Initial tree:"
-    );
+
+    // ==============================
+    // INITIAL TREE
+    // ==============================
+
+    auto result =
+        tree.get_all();
+
+    assert(result.size() == 7);
+
+    assert(result[0].first == 20);
+    assert(result[0].second == "Kiran");
+
+    assert(result[1].first == 30);
+    assert(result[1].second == "Amit");
+
+    assert(result[2].first == 40);
+    assert(result[2].second == "Rohan");
+
+    assert(result[3].first == 50);
+    assert(result[3].second == "Veerendra");
+
+    assert(result[4].first == 60);
+    assert(result[4].second == "Suresh");
+
+    assert(result[5].first == 70);
+    assert(result[5].second == "Rahul");
+
+    assert(result[6].first == 80);
+    assert(result[6].second == "Arjun");
 
 
-    // Delete leaf
+    // ==============================
+    // DELETE LEAF
+    // ==============================
+
     tree.remove(
         20,
         "Kiran"
     );
 
-    print_tree(
-        tree,
-        "After deleting 20:"
-    );
+    result =
+        tree.get_all();
+
+    assert(result.size() == 6);
+
+    assert(result[0].first == 30);
+    assert(result[1].first == 40);
+    assert(result[2].first == 50);
+    assert(result[3].first == 60);
+    assert(result[4].first == 70);
+    assert(result[5].first == 80);
 
 
-    // Delete node with two children
+    // ==============================
+    // DELETE NODE WITH TWO CHILDREN
+    // ==============================
+
     tree.remove(
         70,
         "Rahul"
     );
 
-    print_tree(
-        tree,
-        "After deleting 70:"
-    );
+    result =
+        tree.get_all();
+
+    assert(result.size() == 5);
+
+    assert(result[0].first == 30);
+    assert(result[1].first == 40);
+    assert(result[2].first == 50);
+    assert(result[3].first == 60);
+    assert(result[4].first == 80);
 
 
-    // Delete root
+    // ==============================
+    // DELETE ROOT
+    // ==============================
+
     tree.remove(
         50,
         "Veerendra"
     );
 
-    print_tree(
-        tree,
-        "After deleting 50:"
+    result =
+        tree.get_all();
+
+    assert(result.size() == 4);
+
+    assert(result[0].first == 30);
+    assert(result[0].second == "Amit");
+
+    assert(result[1].first == 40);
+    assert(result[1].second == "Rohan");
+
+    assert(result[2].first == 60);
+    assert(result[2].second == "Suresh");
+
+    assert(result[3].first == 80);
+    assert(result[3].second == "Arjun");
+
+
+    // ==============================
+    // REMOVE NON-EXISTING NODE
+    // ==============================
+
+    tree.remove(
+        999,
+        "Unknown"
     );
 
+    result =
+        tree.get_all();
+
+    assert(result.size() == 4);
+
+
+    std::cout
+        << "All AVL tests passed!\n";
 
     return 0;
 }
