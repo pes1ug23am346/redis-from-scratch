@@ -74,6 +74,100 @@ std::string send_command(
 }
 
 
+std::string send_commands(
+    const std::string& request
+) {
+    int fd =
+        socket(
+            AF_INET,
+            SOCK_STREAM,
+            0
+        );
+
+    assert(fd >= 0);
+
+    sockaddr_in server{};
+
+    server.sin_family =
+        AF_INET;
+
+    server.sin_port =
+        htons(6379);
+
+    inet_pton(
+        AF_INET,
+        "127.0.0.1",
+        &server.sin_addr
+    );
+
+    int connected =
+        connect(
+            fd,
+            reinterpret_cast<sockaddr*>(&server),
+            sizeof(server)
+        );
+
+    assert(connected == 0);
+
+    ssize_t sent =
+        send(
+            fd,
+            request.c_str(),
+            request.size(),
+            0
+        );
+
+    assert(
+        sent ==
+        static_cast<ssize_t>(request.size())
+    );
+
+
+    // Don't allow the test to hang forever.
+    timeval timeout{};
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
+
+    setsockopt(
+        fd,
+        SOL_SOCKET,
+        SO_RCVTIMEO,
+        &timeout,
+        sizeof(timeout)
+    );
+
+
+    std::string result;
+
+    char buffer[4096];
+
+    while (true) {
+
+        ssize_t received =
+            recv(
+                fd,
+                buffer,
+                sizeof(buffer),
+                0
+            );
+
+        if (received <= 0) {
+            break;
+        }
+
+        result.append(
+            buffer,
+            received
+        );
+    }
+
+
+    close(fd);
+
+    return result;
+}
+
+
 int main() {
 
     // ==============================
@@ -555,6 +649,242 @@ int main() {
         "Rahul\r\n"
         "$3\r\n"
         "200\r\n"
+    );
+
+
+    // ==============================
+    // TRANSACTION: MULTI / SET / EXEC
+    // ==============================
+
+    response =
+        send_commands(
+            "*1\r\n"
+            "$5\r\n"
+            "MULTI\r\n"
+
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$5\r\n"
+            "txkey\r\n"
+            "$7\r\n"
+            "txvalue\r\n"
+
+            "*1\r\n"
+            "$4\r\n"
+            "EXEC\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+        "+QUEUED\r\n"
+        "*1\r\n"
+        "+OK\r\n"
+    );
+
+
+    // ==============================
+    // TRANSACTION: SET / GET / EXEC
+    // ==============================
+
+    response =
+        send_commands(
+            "*1\r\n"
+            "$5\r\n"
+            "MULTI\r\n"
+
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$6\r\n"
+            "txkey2\r\n"
+            "$7\r\n"
+            "txvalue\r\n"
+
+            "*2\r\n"
+            "$3\r\n"
+            "GET\r\n"
+            "$6\r\n"
+            "txkey2\r\n"
+
+            "*1\r\n"
+            "$4\r\n"
+            "EXEC\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+        "+QUEUED\r\n"
+        "+QUEUED\r\n"
+        "*2\r\n"
+        "+OK\r\n"
+        "$7\r\n"
+        "txvalue\r\n"
+    );
+
+
+    // ==============================
+    // TRANSACTION: MULTI / DISCARD
+    // ==============================
+
+    response =
+        send_commands(
+            "*1\r\n"
+            "$5\r\n"
+            "MULTI\r\n"
+
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$11\r\n"
+            "discard_key\r\n"
+            "$5\r\n"
+            "value\r\n"
+
+            "*1\r\n"
+            "$7\r\n"
+            "DISCARD\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+        "+QUEUED\r\n"
+        "+OK\r\n"
+    );
+
+
+    // ==============================
+    // EXEC WITHOUT MULTI
+    // ==============================
+
+    response =
+        send_command(
+            "*1\r\n"
+            "$4\r\n"
+            "EXEC\r\n"
+        );
+
+    assert(
+        response ==
+        "-ERR EXEC without MULTI\r\n"
+    );
+
+
+    // ==============================
+    // NESTED MULTI
+    // ==============================
+
+    response =
+        send_commands(
+            "*1\r\n"
+            "$5\r\n"
+            "MULTI\r\n"
+
+            "*1\r\n"
+            "$5\r\n"
+            "MULTI\r\n"
+
+            "*1\r\n"
+            "$7\r\n"
+            "DISCARD\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+        "-ERR MULTI calls can not be nested\r\n"
+        "+OK\r\n"
+    );
+
+
+    // ==============================
+    // TRANSACTION: ZADD / EXEC
+    // ==============================
+
+    response =
+        send_commands(
+            "*1\r\n"
+            "$5\r\n"
+            "MULTI\r\n"
+
+            "*4\r\n"
+            "$4\r\n"
+            "ZADD\r\n"
+            "$8\r\n"
+            "txscores\r\n"
+            "$3\r\n"
+            "100\r\n"
+            "$9\r\n"
+            "Veerendra\r\n"
+
+            "*4\r\n"
+            "$4\r\n"
+            "ZADD\r\n"
+            "$8\r\n"
+            "txscores\r\n"
+            "$3\r\n"
+            "200\r\n"
+            "$5\r\n"
+            "Rahul\r\n"
+
+            "*1\r\n"
+            "$4\r\n"
+            "EXEC\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+        "+QUEUED\r\n"
+        "+QUEUED\r\n"
+        "*2\r\n"
+        ":1\r\n"
+        ":1\r\n"
+    );
+
+
+    // ==============================
+    // TRANSACTION: LPUSH / EXEC
+    // ==============================
+
+    response =
+        send_commands(
+            "*1\r\n"
+            "$5\r\n"
+            "MULTI\r\n"
+
+            "*3\r\n"
+            "$5\r\n"
+            "LPUSH\r\n"
+            "$6\r\n"
+            "txlist\r\n"
+            "$3\r\n"
+            "one\r\n"
+
+            "*3\r\n"
+            "$5\r\n"
+            "LPUSH\r\n"
+            "$6\r\n"
+            "txlist\r\n"
+            "$3\r\n"
+            "two\r\n"
+
+            "*1\r\n"
+            "$4\r\n"
+            "EXEC\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+        "+QUEUED\r\n"
+        "+QUEUED\r\n"
+        "*2\r\n"
+        ":1\r\n"
+        ":2\r\n"
     );
 
 

@@ -27,7 +27,99 @@
 struct Connection {
     int fd;
     std::string input_buffer;
+
+    // Transaction state
+    bool in_transaction = false;
+
+    std::vector<std::vector<std::string>> queued_commands;
+
+    // Responses produced while EXEC is running
+    std::vector<std::string> transaction_responses;
+
+    // True while EXEC is executing queued commands
+    bool executing_transaction = false;
+
+    // Number of queued commands that EXEC must execute
+    size_t expected_transaction_responses = 0;
 };
+
+
+// --------------------------------------
+// Send response normally or collect it
+// during EXEC
+// --------------------------------------
+
+void send_or_queue_response(
+    Connection* connection,
+    int client_fd,
+    const std::string& response
+) {
+
+    if (connection->executing_transaction) {
+
+        connection->transaction_responses.push_back(
+            response
+        );
+
+
+        // EXEC has finished all queued commands
+        if (
+            connection->transaction_responses.size() ==
+            connection->expected_transaction_responses
+        ) {
+
+            std::string transaction_response =
+                respRawArray(
+                    connection->transaction_responses
+                );
+
+            sendRESP(
+                client_fd,
+                transaction_response
+            );
+
+
+            connection->transaction_responses.clear();
+
+            connection->expected_transaction_responses = 0;
+
+            connection->executing_transaction = false;
+        }
+
+        return;
+    }
+
+
+    sendRESP(
+        client_fd,
+        response
+    );
+}
+
+
+// --------------------------------------
+// Encode command as RESP
+// --------------------------------------
+
+std::string encode_command(
+    const std::vector<std::string>& parts
+) {
+
+    std::string result =
+        "*" + std::to_string(parts.size()) + "\r\n";
+
+    for (const auto& part : parts) {
+
+        result +=
+            "$" +
+            std::to_string(part.size()) +
+            "\r\n" +
+            part +
+            "\r\n";
+    }
+
+    return result;
+}
 
 
 // --------------------------------------
@@ -712,7 +804,8 @@ int main() {
                         const char* response =
                             "-ERR protocol error\r\n";
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -773,6 +866,238 @@ int main() {
 
 
                     // ==================================
+                    // MULTI
+                    // ==================================
+
+                    if (parts[0] == "MULTI") {
+
+                        if (parts.size() != 1) {
+
+                            std::string response =
+                                respError("ERR wrong number of arguments");
+
+                            send_or_queue_response(
+                                connection,
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        if (connection->in_transaction) {
+
+                            std::string response =
+                                respError("ERR MULTI calls can not be nested");
+
+                            send_or_queue_response(
+                                connection,
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        connection->in_transaction = true;
+
+                        connection->queued_commands.clear();
+
+
+                        std::string response =
+                            respSimpleString("OK");
+
+                        send_or_queue_response(
+                            connection,
+                            client_fd,
+                            response
+                        );
+
+                        continue;
+                    }
+
+
+                    // ==================================
+                    // EXEC
+                    // ==================================
+
+                    if (parts[0] == "EXEC") {
+
+                        if (parts.size() != 1) {
+
+                            std::string response =
+                                respError("ERR wrong number of arguments");
+
+                            send_or_queue_response(
+                                connection,
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        if (!connection->in_transaction) {
+
+                            std::string response =
+                                respError("ERR EXEC without MULTI");
+
+                            send_or_queue_response(
+                                connection,
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        // Copy queued commands
+                        std::vector<std::vector<std::string>> commands =
+                            connection->queued_commands;
+
+
+                        // Leave transaction mode
+                        connection->in_transaction = false;
+
+                        connection->queued_commands.clear();
+
+
+                        // Prepare EXEC state
+                        connection->transaction_responses.clear();
+
+                        connection->executing_transaction = true;
+
+                        connection->expected_transaction_responses =
+                            commands.size();
+
+
+                        // Empty transaction
+                        if (commands.empty()) {
+
+                            connection->executing_transaction = false;
+
+                            connection->expected_transaction_responses = 0;
+
+                            std::string response =
+                                respRawArray({});
+
+                            sendRESP(
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        // Reinsert queued commands into
+                        // the existing RESP processing pipeline.
+                        std::string encoded_commands;
+
+                        for (const auto& command : commands) {
+
+                            encoded_commands +=
+                                encode_command(command);
+                        }
+
+
+                        connection->input_buffer =
+                            encoded_commands +
+                            connection->input_buffer;
+
+
+                        // Continue into the existing
+                        // command-processing loop.
+                        continue;
+                    }
+
+
+                    // ==================================
+                    // DISCARD
+                    // ==================================
+
+                    if (parts[0] == "DISCARD") {
+
+                        if (parts.size() != 1) {
+
+                            std::string response =
+                                respError("ERR wrong number of arguments");
+
+                            send_or_queue_response(
+                                connection,
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        if (!connection->in_transaction) {
+
+                            std::string response =
+                                respError("ERR DISCARD without MULTI");
+
+                            send_or_queue_response(
+                                connection,
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        connection->queued_commands.clear();
+
+                        connection->in_transaction = false;
+
+
+                        std::string response =
+                            respSimpleString("OK");
+
+                        send_or_queue_response(
+                            connection,
+                            client_fd,
+                            response
+                        );
+
+                        continue;
+                    }
+
+
+                    // ==================================
+                    // TRANSACTION QUEUE
+                    // ==================================
+
+                    if (
+                        connection->in_transaction &&
+                        parts[0] != "EXEC" &&
+                        parts[0] != "DISCARD"
+                    ) {
+
+                        connection->queued_commands.push_back(
+                            parts
+                        );
+
+                        std::string response =
+                            respSimpleString("QUEUED");
+
+                        send_or_queue_response(
+                            connection,
+                            client_fd,
+                            response
+                        );
+
+                        continue;
+                    }
+
+
+                    // ==================================
                     // PING
                     // ==================================
 
@@ -785,7 +1110,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -797,7 +1123,8 @@ int main() {
                         std::string response =
                             respSimpleString("PONG");
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -817,7 +1144,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -829,7 +1157,8 @@ int main() {
                         std::string response =
                             respBulkString(parts[1]);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -851,7 +1180,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -945,7 +1275,8 @@ int main() {
                             respSimpleString("OK");
 
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -965,7 +1296,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -992,7 +1324,8 @@ int main() {
                                 respBulkString(value);
 
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1003,7 +1336,8 @@ int main() {
                                 respNull();
 
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1028,7 +1362,8 @@ int main() {
                                     "ERR wrong number of arguments"
                                 );
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1050,7 +1385,8 @@ int main() {
                                     "ERR failed to save database"
                                 );
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1063,7 +1399,8 @@ int main() {
                             respSimpleString("OK");
 
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1082,7 +1419,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1107,7 +1445,8 @@ int main() {
                                 respInteger(1);
 
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1118,7 +1457,8 @@ int main() {
                                 respInteger(0);
 
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1138,7 +1478,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1168,7 +1509,8 @@ int main() {
                         std::string response =
                             respInteger(count);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1188,7 +1530,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1218,7 +1561,8 @@ int main() {
                             std::string response =
                                 respError("ERR invalid range");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1237,7 +1581,8 @@ int main() {
                             std::string response =
                                 respArray({});
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1256,7 +1601,8 @@ int main() {
                         std::string response =
                             respArray(elements);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1275,7 +1621,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1298,7 +1645,8 @@ int main() {
                             std::string response =
                                 respNull();
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1320,7 +1668,8 @@ int main() {
                             std::string response =
                                 respNull();
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1332,7 +1681,8 @@ int main() {
                         std::string response =
                             respBulkString(value);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1352,7 +1702,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1375,7 +1726,8 @@ int main() {
                             std::string response =
                                 respNull();
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1397,7 +1749,8 @@ int main() {
                             std::string response =
                                 respNull();
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1409,7 +1762,8 @@ int main() {
                         std::string response =
                             respBulkString(value);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1428,7 +1782,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1456,7 +1811,8 @@ int main() {
                                 lists[key].size()
                             );
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1476,7 +1832,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1504,7 +1861,8 @@ int main() {
                                 lists[key].size()
                             );
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1524,7 +1882,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1550,7 +1909,8 @@ int main() {
                             const char* response =
                                 "-ERR invalid score\n";
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1584,7 +1944,8 @@ int main() {
                         }
 
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1604,7 +1965,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1623,7 +1985,8 @@ int main() {
                             std::string response =
                                 respArray({});
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1644,7 +2007,8 @@ int main() {
                             std::string response =
                                 respArray({});
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1665,7 +2029,8 @@ int main() {
                         std::string response =
                             respArray(values);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1685,7 +2050,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1704,7 +2070,8 @@ int main() {
                             std::string response =
                                 respArray({});
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1725,7 +2092,8 @@ int main() {
                             std::string response =
                                 respArray({});
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1746,7 +2114,8 @@ int main() {
                         std::string response =
                             respArray(values);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1766,7 +2135,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1792,7 +2162,8 @@ int main() {
                             const char* response =
                                 "-ERR invalid increment\n";
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1817,7 +2188,8 @@ int main() {
                                 format_score(new_score)
                             );
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1837,7 +2209,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1871,7 +2244,8 @@ int main() {
                             std::string response =
                                 respNull();
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1885,7 +2259,8 @@ int main() {
                                 format_score(score)
                             );
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1905,7 +2280,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1935,7 +2311,8 @@ int main() {
                         std::string response =
                             respInteger(count);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -1955,7 +2332,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -1991,7 +2369,8 @@ int main() {
                         }
 
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -2020,7 +2399,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2042,7 +2422,8 @@ int main() {
                             std::string response =
                                 respError("ERR syntax error");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2069,7 +2450,8 @@ int main() {
                             std::string response =
                                 respError("ERR invalid range");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2129,7 +2511,8 @@ int main() {
                             std::string response =
                                 respArray({});
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2168,7 +2551,8 @@ int main() {
                         std::string response =
                             respArray(values);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -2182,7 +2566,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2203,7 +2588,8 @@ int main() {
                             const char* response =
                                 "-ERR invalid milliseconds\n";
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2220,7 +2606,8 @@ int main() {
                             std::string response =
                                 respInteger(0);
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2239,7 +2626,8 @@ int main() {
                         std::string response =
                             respInteger(1);
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
@@ -2253,7 +2641,8 @@ int main() {
                             std::string response =
                                 respError("ERR wrong number of arguments");
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2272,7 +2661,8 @@ int main() {
                             std::string response =
                                 respInteger(-2);
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2291,7 +2681,8 @@ int main() {
                             std::string response =
                                 respInteger(-1);
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2301,7 +2692,8 @@ int main() {
                             std::string response =
                                 respInteger(ttl);
 
-                            sendRESP(
+                            send_or_queue_response(
+                                connection,
                                 client_fd,
                                 response
                             );
@@ -2319,7 +2711,8 @@ int main() {
                             "-ERR unknown command\r\n";
 
 
-                        sendRESP(
+                        send_or_queue_response(
+                            connection,
                             client_fd,
                             response
                         );
