@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <fstream>
 #include <cerrno>
 #include <fcntl.h>
 
@@ -99,6 +100,168 @@ std::vector<std::string> parse_command(
     }
 
     return parts;
+}
+
+
+
+// --------------------------------------
+// Save key-value database to disk
+// --------------------------------------
+
+bool save_database(
+    const HashTable& store
+) {
+
+    std::ofstream file(
+        "../data/dump.rdb",
+        std::ios::binary
+    );
+
+    if (!file) {
+        return false;
+    }
+
+    auto entries =
+        store.get_all();
+
+    uint64_t count =
+        entries.size();
+
+    file.write(
+        reinterpret_cast<const char*>(&count),
+        sizeof(count)
+    );
+
+    for (const auto& entry : entries) {
+
+        const std::string& key =
+            entry.first;
+
+        const std::string& value =
+            entry.second;
+
+        uint64_t key_size =
+            key.size();
+
+        uint64_t value_size =
+            value.size();
+
+        file.write(
+            reinterpret_cast<const char*>(&key_size),
+            sizeof(key_size)
+        );
+
+        file.write(
+            key.data(),
+            key.size()
+        );
+
+        file.write(
+            reinterpret_cast<const char*>(&value_size),
+            sizeof(value_size)
+        );
+
+        file.write(
+            value.data(),
+            value.size()
+        );
+    }
+
+    return file.good();
+}
+
+
+// --------------------------------------
+// Load key-value database from disk
+// --------------------------------------
+
+bool load_database(
+    HashTable& store
+) {
+
+    std::ifstream file(
+        "../data/dump.rdb",
+        std::ios::binary
+    );
+
+    if (!file) {
+        return false;
+    }
+
+    uint64_t count;
+
+    file.read(
+        reinterpret_cast<char*>(&count),
+        sizeof(count)
+    );
+
+    if (!file) {
+        return false;
+    }
+
+    for (
+        uint64_t i = 0;
+        i < count;
+        i++
+    ) {
+
+        uint64_t key_size;
+
+        file.read(
+            reinterpret_cast<char*>(&key_size),
+            sizeof(key_size)
+        );
+
+        if (!file) {
+            return false;
+        }
+
+        std::string key(
+            key_size,
+            '\0'
+        );
+
+        file.read(
+            key.data(),
+            key_size
+        );
+
+        if (!file) {
+            return false;
+        }
+
+        uint64_t value_size;
+
+        file.read(
+            reinterpret_cast<char*>(&value_size),
+            sizeof(value_size)
+        );
+
+        if (!file) {
+            return false;
+        }
+
+        std::string value(
+            value_size,
+            '\0'
+        );
+
+        file.read(
+            value.data(),
+            value_size
+        );
+
+        if (!file) {
+            return false;
+        }
+
+        store.set(
+            key,
+            value
+        );
+    }
+
+    return true;
 }
 
 
@@ -231,6 +394,10 @@ int main() {
     // ----------------------------------
 
     HashTable store;
+
+    // Load saved database from disk
+    load_database(store);
+
     ExpiryHeap expiry_heap;
     std::unordered_map<std::string, ZSet> zsets;
     std::unordered_map<std::string, RedisList> lists;
@@ -588,6 +755,17 @@ int main() {
                     }
 
 
+                    // Redis commands are case-insensitive
+                    std::transform(
+                        parts[0].begin(),
+                        parts[0].end(),
+                        parts[0].begin(),
+                        [](unsigned char c) {
+                            return std::toupper(c);
+                        }
+                    );
+
+
                     std::cout
                         << "Command: "
                         << parts[0]
@@ -595,10 +773,74 @@ int main() {
 
 
                     // ==================================
+                    // PING
+                    // ==================================
+
+                    if (parts[0] == "PING") {
+
+                        // PING takes no arguments
+
+                        if (parts.size() != 1) {
+
+                            std::string response =
+                                respError("ERR wrong number of arguments");
+
+                            sendRESP(
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string response =
+                            respSimpleString("PONG");
+
+                        sendRESP(
+                            client_fd,
+                            response
+                        );
+                    }
+
+
+                    // ==================================
+                    // ECHO
+                    // ==================================
+
+                    else if (parts[0] == "ECHO") {
+
+                        // ECHO message
+
+                        if (parts.size() != 2) {
+
+                            std::string response =
+                                respError("ERR wrong number of arguments");
+
+                            sendRESP(
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string response =
+                            respBulkString(parts[1]);
+
+                        sendRESP(
+                            client_fd,
+                            response
+                        );
+                    }
+
+
+                    // ==================================
                     // SET
                     // ==================================
 
-                    if (parts[0] == "SET") {
+                    else if (parts[0] == "SET") {
 
                         // SET key value
                         // SET key value PX milliseconds
@@ -766,6 +1008,65 @@ int main() {
                                 response
                             );
                         }
+                    }
+
+
+                    // ==================================
+                    // SAVE
+                    // ==================================
+
+                    else if (
+                        parts[0] == "SAVE"
+                    ) {
+
+                        // SAVE takes no arguments
+
+                        if (parts.size() != 1) {
+
+                            std::string response =
+                                respError(
+                                    "ERR wrong number of arguments"
+                                );
+
+                            sendRESP(
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        bool saved =
+                            save_database(
+                                store
+                            );
+
+
+                        if (!saved) {
+
+                            std::string response =
+                                respError(
+                                    "ERR failed to save database"
+                                );
+
+                            sendRESP(
+                                client_fd,
+                                response
+                            );
+
+                            continue;
+                        }
+
+
+                        std::string response =
+                            respSimpleString("OK");
+
+
+                        sendRESP(
+                            client_fd,
+                            response
+                        );
                     }
 
 
@@ -2015,7 +2316,7 @@ int main() {
                     else {
 
                         const char* response =
-                            "-ERR unknown command\n";
+                            "-ERR unknown command\r\n";
 
 
                         sendRESP(

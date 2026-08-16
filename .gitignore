@@ -3,3 +3,5 @@ redis-server
 .vscode/
 build/
 *.o
+data/dump.rdb
+src/main.cpp.backup

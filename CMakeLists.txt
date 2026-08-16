@@ -18,3 +18,7 @@ add_executable(test_avl
 add_executable(test_zset
     tests/test_zset.cpp
 )
+
+add_executable(test_server
+    tests/test_server.cpp
+)

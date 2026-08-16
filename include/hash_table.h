@@ -262,6 +262,32 @@ public:
 
         return false;
     }
+    
+    // ----------------------------------
+    // Get all key-value pairs
+    // ----------------------------------
+
+    std::vector<std::pair<std::string, std::string>> get_all() const {
+
+        std::vector<std::pair<std::string, std::string>> result;
+
+        for (const auto& entry : table) {
+
+            if (
+                entry.state ==
+                Entry::State::OCCUPIED
+            ) {
+
+                result.push_back({
+                    entry.key,
+                    entry.value
+                });
+            }
+        }
+
+        return result;
+    }
+
 };
 
 #endif
