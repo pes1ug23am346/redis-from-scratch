@@ -174,4 +174,18 @@ inline std::string respArray(
     return result;
 }
 
+
+inline std::string respRawArray(
+    const std::vector<std::string>& responses
+) {
+    std::string result =
+        "*" + std::to_string(responses.size()) + "\r\n";
+
+    for (const auto& response : responses) {
+        result += response;
+    }
+
+    return result;
+}
+
 #endif
