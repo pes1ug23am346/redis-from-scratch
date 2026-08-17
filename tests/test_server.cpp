@@ -1,10 +1,12 @@
 #include <cassert>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <string>
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 std::string send_command(
@@ -886,6 +888,130 @@ int main() {
         ":1\r\n"
         ":2\r\n"
     );
+
+
+    // ==============================
+    // PERSISTENCE: SET / SAVE
+    // ==============================
+
+    response =
+        send_command(
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$11\r\n"
+            "persist_key\r\n"
+            "$13\r\n"
+            "persist_value\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$12\r\n"
+            "persist_key2\r\n"
+            "$14\r\n"
+            "persist_value2\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*1\r\n"
+            "$4\r\n"
+            "SAVE\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+    );
+
+
+    struct stat file_info{};
+
+    int file_exists =
+        stat(
+            "../data/dump.rdb",
+            &file_info
+        );
+
+    assert(file_exists == 0);
+
+    assert(file_info.st_size > 0);
+
+
+    // ==============================
+    // PERSISTENCE: EMPTY DATABASE
+    // ==============================
+
+    response =
+        send_command(
+            "*2\r\n"
+            "$3\r\n"
+            "DEL\r\n"
+            "$11\r\n"
+            "persist_key\r\n"
+        );
+
+    assert(
+        response ==
+        ":1\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*2\r\n"
+            "$3\r\n"
+            "DEL\r\n"
+            "$12\r\n"
+            "persist_key2\r\n"
+        );
+
+    assert(
+        response ==
+        ":1\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*1\r\n"
+            "$4\r\n"
+            "SAVE\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+    );
+
+
+    struct stat empty_file_info{};
+
+    int empty_file_exists =
+        stat(
+            "../data/dump.rdb",
+            &empty_file_info
+        );
+
+    assert(empty_file_exists == 0);
+
+    assert(empty_file_info.st_size > 0);
 
 
     // ==============================

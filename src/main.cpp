@@ -201,7 +201,8 @@ std::vector<std::string> parse_command(
 // --------------------------------------
 
 bool save_database(
-    const HashTable& store
+    const HashTable& store,
+    const ExpiryHeap& expiry_heap
 ) {
 
     std::ofstream file(
@@ -213,16 +214,63 @@ bool save_database(
         return false;
     }
 
+
+    // RDB format identifier
+    const uint64_t magic =
+        0x5245444953444231ULL; // "REDISDB1"
+
+    const uint64_t version = 1;
+
+
+    file.write(
+        reinterpret_cast<const char*>(&magic),
+        sizeof(magic)
+    );
+
+    file.write(
+        reinterpret_cast<const char*>(&version),
+        sizeof(version)
+    );
+
+
     auto entries =
         store.get_all();
 
-    uint64_t count =
-        entries.size();
+
+    // Count only entries that should actually
+    // be persisted.
+    uint64_t count = 0;
+
+    for (const auto& entry : entries) {
+
+        long long expire_at =
+            expiry_heap.get_expire_at(
+                entry.first
+            );
+
+        // Key has an expiration.
+        if (expire_at != -1) {
+
+            long long ttl =
+                expiry_heap.get_ttl(
+                    entry.first
+                );
+
+            // Already expired.
+            if (ttl <= 0) {
+                continue;
+            }
+        }
+
+        count++;
+    }
+
 
     file.write(
         reinterpret_cast<const char*>(&count),
         sizeof(count)
     );
+
 
     for (const auto& entry : entries) {
 
@@ -232,11 +280,31 @@ bool save_database(
         const std::string& value =
             entry.second;
 
+
+        long long expire_at =
+            expiry_heap.get_expire_at(key);
+
+        long long ttl = -1;
+
+
+        if (expire_at != -1) {
+
+            ttl =
+                expiry_heap.get_ttl(key);
+
+            // Don't persist an already-expired key.
+            if (ttl <= 0) {
+                continue;
+            }
+        }
+
+
         uint64_t key_size =
             key.size();
 
         uint64_t value_size =
             value.size();
+
 
         file.write(
             reinterpret_cast<const char*>(&key_size),
@@ -248,6 +316,7 @@ bool save_database(
             key.size()
         );
 
+
         file.write(
             reinterpret_cast<const char*>(&value_size),
             sizeof(value_size)
@@ -257,7 +326,15 @@ bool save_database(
             value.data(),
             value.size()
         );
+
+
+        // Remaining TTL.
+        file.write(
+            reinterpret_cast<const char*>(&ttl),
+            sizeof(ttl)
+        );
     }
+
 
     return file.good();
 }
@@ -268,7 +345,8 @@ bool save_database(
 // --------------------------------------
 
 bool load_database(
-    HashTable& store
+    HashTable& store,
+    ExpiryHeap& expiry_heap
 ) {
 
     std::ifstream file(
@@ -280,6 +358,37 @@ bool load_database(
         return false;
     }
 
+
+    const uint64_t expected_magic =
+        0x5245444953444231ULL;
+
+    const uint64_t expected_version = 1;
+
+
+    uint64_t magic;
+
+    file.read(
+        reinterpret_cast<char*>(&magic),
+        sizeof(magic)
+    );
+
+    if (!file || magic != expected_magic) {
+        return false;
+    }
+
+
+    uint64_t version;
+
+    file.read(
+        reinterpret_cast<char*>(&version),
+        sizeof(version)
+    );
+
+    if (!file || version != expected_version) {
+        return false;
+    }
+
+
     uint64_t count;
 
     file.read(
@@ -290,6 +399,7 @@ bool load_database(
     if (!file) {
         return false;
     }
+
 
     for (
         uint64_t i = 0;
@@ -308,6 +418,7 @@ bool load_database(
             return false;
         }
 
+
         std::string key(
             key_size,
             '\0'
@@ -322,6 +433,7 @@ bool load_database(
             return false;
         }
 
+
         uint64_t value_size;
 
         file.read(
@@ -332,6 +444,7 @@ bool load_database(
         if (!file) {
             return false;
         }
+
 
         std::string value(
             value_size,
@@ -347,15 +460,39 @@ bool load_database(
             return false;
         }
 
+
+        long long ttl;
+
+        file.read(
+            reinterpret_cast<char*>(&ttl),
+            sizeof(ttl)
+        );
+
+        if (!file) {
+            return false;
+        }
+
+
+        // Restore key/value.
         store.set(
             key,
             value
         );
+
+
+        // Restore expiration.
+        if (ttl > 0) {
+
+            expiry_heap.add(
+                key,
+                ttl
+            );
+        }
     }
+
 
     return true;
 }
-
 
 int main() {
 
@@ -487,10 +624,13 @@ int main() {
 
     HashTable store;
 
-    // Load saved database from disk
-    load_database(store);
-
     ExpiryHeap expiry_heap;
+
+    // Load saved database from disk
+    load_database(
+        store,
+        expiry_heap
+    );
     std::unordered_map<std::string, ZSet> zsets;
     std::unordered_map<std::string, RedisList> lists;
 
@@ -1374,7 +1514,8 @@ int main() {
 
                         bool saved =
                             save_database(
-                                store
+                                store,
+                                expiry_heap
                             );
 
 
