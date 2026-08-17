@@ -1337,6 +1337,12 @@ int main() {
                             parts[2];
 
 
+                        // SET replaces the value and
+                        // clears any existing expiration.
+                        expiry_heap.remove(
+                            key
+                        );
+
                         // Store value
                         store.set(
                             key,
@@ -1581,6 +1587,10 @@ int main() {
 
 
                         if (deleted) {
+
+                            expiry_heap.remove(
+                                key
+                            );
 
                             std::string response =
                                 respInteger(1);

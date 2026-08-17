@@ -1015,6 +1015,161 @@ int main() {
 
 
     // ==============================
+    // TTL: DEL clears expiration
+    // ==============================
+
+    response =
+        send_command(
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$12\r\n"
+            "del_ttl_test\r\n"
+            "$5\r\n"
+            "hello\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*3\r\n"
+            "$7\r\n"
+            "PEXPIRE\r\n"
+            "$12\r\n"
+            "del_ttl_test\r\n"
+            "$4\r\n"
+            "5000\r\n"
+        );
+
+    assert(
+        response ==
+        ":1\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*2\r\n"
+            "$3\r\n"
+            "DEL\r\n"
+            "$12\r\n"
+            "del_ttl_test\r\n"
+        );
+
+    assert(
+        response ==
+        ":1\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$12\r\n"
+            "del_ttl_test\r\n"
+            "$6\r\n"
+            "value2\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*2\r\n"
+            "$4\r\n"
+            "PTTL\r\n"
+            "$12\r\n"
+            "del_ttl_test\r\n"
+        );
+
+    assert(
+        response ==
+        ":-1\r\n"
+    );
+
+
+    // ==============================
+    // TTL: SET clears expiration
+    // ==============================
+
+    response =
+        send_command(
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$12\r\n"
+            "set_ttl_test\r\n"
+            "$6\r\n"
+            "value1\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*3\r\n"
+            "$7\r\n"
+            "PEXPIRE\r\n"
+            "$12\r\n"
+            "set_ttl_test\r\n"
+            "$4\r\n"
+            "5000\r\n"
+        );
+
+    assert(
+        response ==
+        ":1\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$12\r\n"
+            "set_ttl_test\r\n"
+            "$6\r\n"
+            "value2\r\n"
+        );
+
+    assert(
+        response ==
+        "+OK\r\n"
+    );
+
+
+    response =
+        send_command(
+            "*2\r\n"
+            "$4\r\n"
+            "PTTL\r\n"
+            "$12\r\n"
+            "set_ttl_test\r\n"
+        );
+
+    assert(
+        response ==
+        ":-1\r\n"
+    );
+
+
+    // ==============================
     // UNKNOWN COMMAND
     // ==============================
 

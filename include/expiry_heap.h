@@ -187,6 +187,14 @@ public:
     }
 
 
+    // Remove expiration metadata for a key
+    void remove(
+        const std::string& key
+    ) {
+        latest_expiration.erase(key);
+    }
+
+
     // Remaining TTL
     long long get_ttl(
         const std::string& key
