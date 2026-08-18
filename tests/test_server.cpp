@@ -1843,6 +1843,115 @@ int main() {
 
 
     // ==============================
+    // MALFORMED RESP
+    // ==============================
+
+    {
+        int fd =
+            connect_to_server();
+
+
+        // Invalid RESP type.
+
+        std::string request =
+            "X\r\n";
+
+
+        ssize_t sent =
+            send(
+                fd,
+                request.c_str(),
+                request.size(),
+                0
+            );
+
+        assert(
+            sent ==
+            static_cast<ssize_t>(
+                request.size()
+            )
+        );
+
+
+        char buffer[4096];
+
+        ssize_t received =
+            recv(
+                fd,
+                buffer,
+                sizeof(buffer) - 1,
+                0
+            );
+
+        assert(received > 0);
+
+        buffer[received] =
+            '\0';
+
+
+        response =
+            std::string(buffer);
+
+
+        assert(
+            response ==
+            "-ERR protocol error\r\n"
+        );
+
+
+        close(fd);
+    }
+
+
+    // ==============================
+    // SERVER SURVIVES MALFORMED RESP
+    // ==============================
+
+    response =
+        send_command(
+            "*1\r\n"
+            "$4\r\n"
+            "PING\r\n"
+        );
+
+    assert(
+        response ==
+        "+PONG\r\n"
+    );
+
+
+    // ==============================
+    // CLIENT DISCONNECT HANDLING
+    // ==============================
+
+    {
+        // Client connects and disconnects immediately.
+
+        int fd =
+            connect_to_server();
+
+        close(fd);
+
+
+        // Server must continue accepting
+        // new clients normally.
+
+        response =
+            send_command(
+                "*1\r\n"
+                "$4\r\n"
+                "PING\r\n"
+            );
+
+
+        assert(
+            response ==
+            "+PONG\r\n"
+        );
+    }
+
+
+    // ==============================
     // UNKNOWN COMMAND
     // ==============================
 
