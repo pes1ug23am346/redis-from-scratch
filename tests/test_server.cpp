@@ -170,6 +170,83 @@ std::string send_commands(
 }
 
 
+
+int connect_to_server() {
+
+    int fd =
+        socket(
+            AF_INET,
+            SOCK_STREAM,
+            0
+        );
+
+    assert(fd >= 0);
+
+    sockaddr_in server{};
+
+    server.sin_family =
+        AF_INET;
+
+    server.sin_port =
+        htons(6379);
+
+    inet_pton(
+        AF_INET,
+        "127.0.0.1",
+        &server.sin_addr
+    );
+
+    int connected =
+        connect(
+            fd,
+            reinterpret_cast<sockaddr*>(&server),
+            sizeof(server)
+        );
+
+    assert(connected == 0);
+
+    return fd;
+}
+
+
+std::string send_on_connection(
+    int fd,
+    const std::string& request
+) {
+
+    ssize_t sent =
+        send(
+            fd,
+            request.c_str(),
+            request.size(),
+            0
+        );
+
+    assert(
+        sent ==
+        static_cast<ssize_t>(request.size())
+    );
+
+
+    char buffer[4096];
+
+    ssize_t received =
+        recv(
+            fd,
+            buffer,
+            sizeof(buffer) - 1,
+            0
+        );
+
+    assert(received > 0);
+
+    buffer[received] =
+        '\0';
+
+    return std::string(buffer);
+}
+
+
 int main() {
 
     // ==============================
@@ -1167,6 +1244,395 @@ int main() {
         response ==
         ":-1\r\n"
     );
+
+
+    // ==============================
+    // TRANSACTIONS
+    // ==============================
+
+    // MULTI -> SET -> GET -> EXEC
+
+    {
+        int fd = connect_to_server();
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$5\r\n"
+                "MULTI\r\n"
+            );
+
+        assert(response == "+OK\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*3\r\n"
+                "$3\r\n"
+                "SET\r\n"
+                "$7\r\n"
+                "tx_test\r\n"
+                "$5\r\n"
+                "hello\r\n"
+            );
+
+        assert(response == "+QUEUED\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*2\r\n"
+                "$3\r\n"
+                "GET\r\n"
+                "$7\r\n"
+                "tx_test\r\n"
+            );
+
+        assert(response == "+QUEUED\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$4\r\n"
+                "EXEC\r\n"
+            );
+
+        assert(
+            response ==
+            "*2\r\n"
+            "+OK\r\n"
+            "$5\r\n"
+            "hello\r\n"
+        );
+
+        close(fd);
+    }
+
+
+    // MULTI -> SET -> PEXPIRE -> EXEC
+
+    {
+        int fd = connect_to_server();
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$5\r\n"
+                "MULTI\r\n"
+            );
+
+        assert(response == "+OK\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*3\r\n"
+                "$3\r\n"
+                "SET\r\n"
+                "$11\r\n"
+                "tx_ttl_test\r\n"
+                "$5\r\n"
+                "hello\r\n"
+            );
+
+        assert(response == "+QUEUED\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*3\r\n"
+                "$7\r\n"
+                "PEXPIRE\r\n"
+                "$11\r\n"
+                "tx_ttl_test\r\n"
+                "$4\r\n"
+                "1000\r\n"
+            );
+
+        assert(response == "+QUEUED\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$4\r\n"
+                "EXEC\r\n"
+            );
+
+        assert(
+            response ==
+            "*2\r\n"
+            "+OK\r\n"
+            ":1\r\n"
+        );
+
+        close(fd);
+    }
+
+
+    // MULTI -> DEL -> EXEC
+
+    {
+        int fd = connect_to_server();
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$5\r\n"
+                "MULTI\r\n"
+            );
+
+        assert(response == "+OK\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*2\r\n"
+                "$3\r\n"
+                "DEL\r\n"
+                "$11\r\n"
+                "tx_ttl_test\r\n"
+            );
+
+        assert(response == "+QUEUED\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$4\r\n"
+                "EXEC\r\n"
+            );
+
+        assert(
+            response ==
+            "*1\r\n"
+            ":1\r\n"
+        );
+
+        close(fd);
+    }
+
+
+    response =
+        send_command(
+            "*2\r\n"
+            "$3\r\n"
+            "GET\r\n"
+            "$11\r\n"
+            "tx_ttl_test\r\n"
+        );
+
+    assert(response == "$-1\r\n");
+
+
+    // MULTI -> SET -> DISCARD
+
+    {
+        int fd = connect_to_server();
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$5\r\n"
+                "MULTI\r\n"
+            );
+
+        assert(response == "+OK\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*3\r\n"
+                "$3\r\n"
+                "SET\r\n"
+                "$12\r\n"
+                "discard_test\r\n"
+                "$5\r\n"
+                "hello\r\n"
+            );
+
+        assert(response == "+QUEUED\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$7\r\n"
+                "DISCARD\r\n"
+            );
+
+        assert(response == "+OK\r\n");
+
+        close(fd);
+    }
+
+
+    response =
+        send_command(
+            "*2\r\n"
+            "$3\r\n"
+            "GET\r\n"
+            "$12\r\n"
+            "discard_test\r\n"
+        );
+
+    assert(response == "$-1\r\n");
+
+
+    // Invalid command inside MULTI
+
+    {
+        int fd = connect_to_server();
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$5\r\n"
+                "MULTI\r\n"
+            );
+
+        assert(response == "+OK\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$5\r\n"
+                "PINGX\r\n"
+            );
+
+        assert(response == "+QUEUED\r\n");
+
+
+        response =
+            send_on_connection(
+                fd,
+                "*1\r\n"
+                "$4\r\n"
+                "EXEC\r\n"
+            );
+
+        assert(
+            response ==
+            "*1\r\n"
+            "-ERR unknown command\r\n"
+        );
+
+        close(fd);
+    }
+
+
+    // ==============================
+    // TRANSACTION ISOLATION
+    // ==============================
+
+    {
+        int client_a = connect_to_server();
+        int client_b = connect_to_server();
+
+
+        // Client A starts a transaction.
+
+        response =
+            send_on_connection(
+                client_a,
+                "*1\r\n"
+                "$5\r\n"
+                "MULTI\r\n"
+            );
+
+        assert(response == "+OK\r\n");
+
+
+        // SET is queued on Client A.
+
+        response =
+            send_on_connection(
+                client_a,
+                "*3\r\n"
+                "$3\r\n"
+                "SET\r\n"
+                "$17\r\n"
+                "tx_isolation_2026\r\n"
+                "$5\r\n"
+                "hello\r\n"
+            );
+
+        assert(response == "+QUEUED\r\n");
+
+
+        // Client B must not see the queued value.
+
+        response =
+            send_on_connection(
+                client_b,
+                "*2\r\n"
+                "$3\r\n"
+                "GET\r\n"
+                "$17\r\n"
+                "tx_isolation_2026\r\n"
+            );
+
+        assert(response == "$-1\r\n");
+
+
+        // Client A executes its transaction.
+
+        response =
+            send_on_connection(
+                client_a,
+                "*1\r\n"
+                "$4\r\n"
+                "EXEC\r\n"
+            );
+
+        assert(
+            response ==
+            "*1\r\n"
+            "+OK\r\n"
+        );
+
+
+        // Now Client B can see the committed value.
+
+        response =
+            send_on_connection(
+                client_b,
+                "*2\r\n"
+                "$3\r\n"
+                "GET\r\n"
+                "$17\r\n"
+                "tx_isolation_2026\r\n"
+            );
+
+        assert(
+            response ==
+            "$5\r\n"
+            "hello\r\n"
+        );
+
+
+        close(client_a);
+        close(client_b);
+    }
 
 
     // ==============================
