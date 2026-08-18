@@ -247,6 +247,44 @@ std::string send_on_connection(
 }
 
 
+void send_in_parts(
+    int fd,
+    const std::string& first,
+    const std::string& second
+) {
+
+    ssize_t sent =
+        send(
+            fd,
+            first.c_str(),
+            first.size(),
+            0
+        );
+
+    assert(
+        sent ==
+        static_cast<ssize_t>(first.size())
+    );
+
+
+    usleep(100000);
+
+
+    sent =
+        send(
+            fd,
+            second.c_str(),
+            second.size(),
+            0
+        );
+
+    assert(
+        sent ==
+        static_cast<ssize_t>(second.size())
+    );
+}
+
+
 int main() {
 
     // ==============================
@@ -1632,6 +1670,175 @@ int main() {
 
         close(client_a);
         close(client_b);
+    }
+
+
+    // ==============================
+    // FRAGMENTED RESP REQUEST
+    // ==============================
+
+    {
+        int fd =
+            connect_to_server();
+
+
+        // Send GET in two separate TCP writes.
+        // The first write is intentionally incomplete.
+
+        send_in_parts(
+            fd,
+            "*2\r\n"
+            "$3\r\n"
+            "GE",
+
+            "T\r\n"
+            "$13\r\n"
+            "fragment_test\r\n"
+        );
+
+
+        char buffer[4096];
+
+        ssize_t received =
+            recv(
+                fd,
+                buffer,
+                sizeof(buffer) - 1,
+                0
+            );
+
+        assert(received > 0);
+
+        buffer[received] =
+            '\0';
+
+
+        response =
+            std::string(buffer);
+
+
+        assert(
+            response ==
+            "$-1\r\n"
+        );
+
+
+        close(fd);
+    }
+
+
+    // ==============================
+    // PIPELINING / MULTIPLE COMMANDS
+    // ==============================
+
+    {
+        int fd =
+            connect_to_server();
+
+
+        std::string request =
+            "*3\r\n"
+            "$3\r\n"
+            "SET\r\n"
+            "$13\r\n"
+            "pipeline_test\r\n"
+            "$5\r\n"
+            "hello\r\n"
+
+            "*2\r\n"
+            "$3\r\n"
+            "GET\r\n"
+            "$13\r\n"
+            "pipeline_test\r\n"
+
+            "*2\r\n"
+            "$4\r\n"
+            "PTTL\r\n"
+            "$13\r\n"
+            "pipeline_test\r\n";
+
+
+        ssize_t sent =
+            send(
+                fd,
+                request.c_str(),
+                request.size(),
+                0
+            );
+
+        assert(
+            sent ==
+            static_cast<ssize_t>(
+                request.size()
+            )
+        );
+
+
+        // TCP may split the responses across
+        // multiple recv() calls.
+
+        timeval timeout{};
+
+        timeout.tv_sec = 2;
+        timeout.tv_usec = 0;
+
+        setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &timeout,
+            sizeof(timeout)
+        );
+
+
+        std::string result;
+
+        char buffer[4096];
+
+
+        while (true) {
+
+            ssize_t received =
+                recv(
+                    fd,
+                    buffer,
+                    sizeof(buffer),
+                    0
+                );
+
+            if (received <= 0) {
+                break;
+            }
+
+            result.append(
+                buffer,
+                received
+            );
+
+
+            if (
+                result.find(
+                    "+OK\r\n"
+                    "$5\r\n"
+                    "hello\r\n"
+                    ":-1\r\n"
+                ) != std::string::npos
+            ) {
+                break;
+            }
+        }
+
+
+        assert(
+            result ==
+            "+OK\r\n"
+            "$5\r\n"
+            "hello\r\n"
+            ":-1\r\n"
+        );
+
+
+        close(fd);
     }
 
 
